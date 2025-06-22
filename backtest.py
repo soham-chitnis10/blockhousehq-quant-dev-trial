@@ -166,8 +166,25 @@ def tune_parameters(snapshots, order_size):
                 cost = cont_kukanov(order_size,snapshots,lambda_over, lambda_under, theta_queue)
                 if cost < best_cost:
                     best_cost = cost
-                    best_params = [lambda_over, lambda_under, theta_queue]
+                    best_params = [float(lambda_over), float(lambda_under), float(theta_queue)]
     return best_cost, best_params
+
+def vwap(order_size, snapshots):
+    remaining_shares = order_size
+    total_cash_spent = 0
+    for ts, venues in snapshots.items():
+        if remaining_shares <= 0:
+            break
+        total_volume = sum([v['ask_sz_00'] for v in venues])
+        for v in venues:
+            if remaining_shares <=0:
+                break
+            weight = v['ask_sz_00']/total_volume
+            exe = min(int(remaining_shares*weight),v['ask_sz_00'])
+            total_cash_spent += exe * (v['ask_px_00']+ FEES)
+            remaining_shares -= exe
+    return total_cash_spent
+
 
 if __name__ == '__main__':
     consumer = KafkaConsumer(
@@ -197,7 +214,15 @@ if __name__ == '__main__':
     print("Calculating SOR with Naive best Ask")
     naive_cash_spent = naive_best_ask(5000,snapshots)
     print(naive_cash_spent, naive_cash_spent/5000)
+    vwap_cash_spent = vwap(5000,snapshots)
+    print(vwap_cash_spent, vwap_cash_spent/5000)
     
     best_cost, best_params = tune_parameters(snapshots, 5000)
     print(best_cost, best_params, best_cost/5000)
+
+    savings_vs_naive_best_ask = (1 - best_cost/naive_cash_spent)*1000
+    print(savings_vs_naive_best_ask)
+
+    savings_vs_vwap = (1 - best_cost/vwap_cash_spent)*1000
+    print(savings_vs_vwap)
     
