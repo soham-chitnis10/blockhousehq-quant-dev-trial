@@ -24,7 +24,7 @@ def send_data(producer,df):
         # Send the message to the topic
         producer.send(KAFKA_TOPIC, message)
         print(f"Sent: {message}")
-        time.sleep(0.01)
+        time.sleep(0.001)
 if __name__=="__main__":
     df = load_data()
     producer = create_kafka_producer()
