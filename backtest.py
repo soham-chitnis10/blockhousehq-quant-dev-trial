@@ -3,8 +3,8 @@ import json
 import math
 import numpy as np
 from tqdm import trange
-from datetime import datetime
-import itertools
+from datetime import datetime, timedelta
+
 
 KAFKA_BROKER = 'localhost:9092'
 KAFKA_TOPIC = 'mock_l1_stream'
@@ -185,6 +185,37 @@ def vwap(order_size, snapshots):
             remaining_shares -= exe
     return total_cash_spent
 
+def twap(order_size, snapshots):
+    snapshot_list = list(snapshots.items())
+    interval_start= datetime.fromisoformat(snapshot_list[0][0][:-4])
+    interval = timedelta(minutes=1)
+    snapshots_by_intervals = [[]]
+    total_cash_spent = 0
+    remaining_shares = order_size
+    for ts, venues in snapshot_list:
+        curr_time = datetime.fromisoformat(ts[:-4])
+        if curr_time > interval_start + interval:
+            snapshots_by_intervals.append([])
+            snapshots_by_intervals[-1].extend(venues)
+            interval_start = curr_time
+        else:
+            snapshots_by_intervals[-1].extend(venues)
+    shares_by_interval = order_size // len(snapshots_by_intervals)
+    for i in range(len(snapshots_by_intervals)):
+        if remaining_shares <= 0:
+            break
+        venues = snapshots_by_intervals[i]
+        curr_interval_exe = 0
+        for v in venues:
+            if remaining_shares<=0:
+                break
+            if shares_by_interval<= curr_interval_exe:
+                break
+            exe = min(shares_by_interval-curr_interval_exe,remaining_shares, v['ask_sz_00'])
+            curr_interval_exe += exe
+            total_cash_spent += exe * (v['ask_px_00']+FEES)
+            remaining_shares-= exe
+    return total_cash_spent
 
 if __name__ == '__main__':
     consumer = KafkaConsumer(
@@ -214,15 +245,21 @@ if __name__ == '__main__':
     print("Calculating SOR with Naive best Ask")
     naive_cash_spent = naive_best_ask(5000,snapshots)
     print(naive_cash_spent, naive_cash_spent/5000)
+    print("Calculating SOR with VWAP")
     vwap_cash_spent = vwap(5000,snapshots)
     print(vwap_cash_spent, vwap_cash_spent/5000)
+    print("Calculating SOR with TWAP")
+    twap_cash_spent = twap(5000,snapshots)
+    print(twap_cash_spent, twap_cash_spent/5000)
     
     best_cost, best_params = tune_parameters(snapshots, 5000)
     print(best_cost, best_params, best_cost/5000)
 
-    savings_vs_naive_best_ask = (1 - best_cost/naive_cash_spent)*1000
+    savings_vs_naive_best_ask = (1 - best_cost/naive_cash_spent)*10000
     print(savings_vs_naive_best_ask)
 
-    savings_vs_vwap = (1 - best_cost/vwap_cash_spent)*1000
+    savings_vs_vwap = (1 - best_cost/vwap_cash_spent)*10000
     print(savings_vs_vwap)
     
+    savings_vs_twap = (1 - best_cost/twap_cash_spent)*10000
+    print(savings_vs_twap)
