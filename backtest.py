@@ -4,12 +4,14 @@ import math
 import numpy as np
 from tqdm import trange
 from datetime import datetime
+import itertools
 
 KAFKA_BROKER = 'localhost:9092'
 KAFKA_TOPIC = 'mock_l1_stream'
 CONSUMER_GROUP_ID = 'my_consumer_group'
 
-
+FEES = 0.01
+REBATE = 0.005
 
 def allocate(order_size: int, venues: list[dict], lambda_over: float, lambda_under: float, theta_queue:float)-> tuple[list[int], float]:
     """
@@ -31,7 +33,7 @@ def allocate(order_size: int, venues: list[dict], lambda_over: float, lambda_und
     splits = [[]]  # start with an empty allocation list
 
     # Generate all possible discrete allocations
-    for v_idx in trange(len(venues)):
+    for v_idx in range(len(venues)):
         new_splits = []
         for alloc in splits:
             used = sum(alloc)
@@ -92,7 +94,9 @@ def compute_cost(split, venues, order_size, lambda_over, lambda_under, theta_que
         executed += exe
 
         # Cash spent on executed shares
-        cash_spent += exe * (venues[i]['ask_px_00'])
+        cash_spent += exe * (venues[i]['ask_px_00']+ FEES)
+        maker_rebate = max(split[i]-exe, 0) * REBATE
+        cash_spent -= maker_rebate
 
 
     # Calculate penalties
@@ -103,6 +107,67 @@ def compute_cost(split, venues, order_size, lambda_over, lambda_under, theta_que
     cost_pen = lambda_under * underfill + lambda_over * overfill
 
     return cash_spent + risk_pen + cost_pen
+
+def naive_best_ask(order_size, snapshots):
+    """Naïve Best Ask: Fill order at the venue with the lowest ask price."""
+    remaining = order_size
+    cash_spent = 0
+    for ts, venues in snapshots.items():
+        if remaining <=0:
+            break
+        value = min(venues, key=lambda v: v['ask_px_00'])
+        exe = min(remaining, value['ask_sz_00'])
+        cash_spent += exe * (value['ask_px_00']+FEES)
+        remaining -= exe
+    return cash_spent
+
+def cont_kukanov(order_size, snapshots, lambda_over, lambda_under, theta_queue):
+    remaining_shares = order_size
+    total_cash_spent = 0
+    for ts, venues in snapshots.items():
+        if remaining_shares <= 0:
+            break
+            
+        if sum(v['ask_sz_00'] for v in venues) == 0:
+            continue
+
+        split, cost = allocate(remaining_shares, venues, lambda_over, lambda_under, theta_queue)
+        
+        if not split or cost == float('inf'):
+            continue
+
+        executed_this_step = 0
+        for i, shares in enumerate(split):
+            if shares > 0:
+                actual_filled = min(shares, venues[i]['ask_sz_00'])
+                executed_this_step += actual_filled
+                total_cash_spent += actual_filled * (venues[i]['ask_px_00'] + FEES)
+                maker_rebate = max(shares - actual_filled, 0) * REBATE
+                total_cash_spent -= maker_rebate
+        
+        remaining_shares -= executed_this_step
+
+    if remaining_shares > 0:
+        underfill_penalty = lambda_under * remaining_shares + theta_queue * remaining_shares
+    else:
+        underfill_penalty = 0
+    total_cost = total_cash_spent + underfill_penalty
+    return total_cost
+
+def tune_parameters(snapshots, order_size):
+    p1 = list(np.random.uniform(0,1.0,10))
+    p2 = list(np.random.uniform(0,1.0,10))
+    p3 = list(np.random.uniform(0,1.0,10))
+    best_cost = float('inf')
+    best_params = []
+    for lambda_over in p1:
+        for lambda_under in p2:
+            for theta_queue in p3:
+                cost = cont_kukanov(order_size,snapshots,lambda_over, lambda_under, theta_queue)
+                if cost < best_cost:
+                    best_cost = cost
+                    best_params = [lambda_over, lambda_under, theta_queue]
+    return best_cost, best_params
 
 if __name__ == '__main__':
     consumer = KafkaConsumer(
@@ -118,16 +183,21 @@ if __name__ == '__main__':
     print(f"Consumer started, listening to topic: {KAFKA_TOPIC}")
 
     # Continuously consume messages
-    venues = []
+    snapshots = {}
     for message in consumer:
         print(f"Received: Topic={message.topic}, Partition={message.partition}, "
             f"Offset={message.offset}, Key={message.key}, Value={message.value}")
         value = message.value
         value['ask_px_00'] = float(value['ask_px_00'])
         value['ask_sz_00'] = int(value['ask_sz_00'])
+        venues = snapshots.get(value['id'],[])
         venues.append(value)
-    # print(venues)    
+        snapshots[value['id']] = venues
 
+    print("Calculating SOR with Naive best Ask")
+    naive_cash_spent = naive_best_ask(5000,snapshots)
+    print(naive_cash_spent, naive_cash_spent/5000)
     
-    best_split, best_cost = allocate(5000,venues,np.random.random(),np.random.random(),np.random.random())
-    print(best_split, best_cost)
+    best_cost, best_params = tune_parameters(snapshots, 5000)
+    print(best_cost, best_params, best_cost/5000)
+    
