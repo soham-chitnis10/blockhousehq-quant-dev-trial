@@ -2,7 +2,6 @@ from kafka import KafkaConsumer
 import json
 import math
 import numpy as np
-from tqdm import trange
 from datetime import datetime, timedelta
 
 
@@ -263,3 +262,17 @@ if __name__ == '__main__':
     
     savings_vs_twap = (1 - best_cost/twap_cash_spent)*10000
     print(savings_vs_twap)
+
+    results = {}
+    results['best_paramters'] = {'lambda_over':best_params[0], "lambda_under":best_params[1], "theta_queue":best_params[2]}
+    results['optimized'] = {"total_cash":best_cost, "avg_fill_px":best_cost/5000}
+    results["baseline"] = {"best_ask":{"total_cash": naive_cash_spent, "avg_fill_px":naive_cash_spent/5000},
+                           "twap":{"total_cash": twap_cash_spent, "avg_fill_px":twap_cash_spent/5000},
+                           "vwap":{"total_cash": vwap_cash_spent, "avg_fill_px":vwap_cash_spent/5000}}
+    results['savings_vs_baseline_bps'] = {"best_ask": savings_vs_naive_best_ask, "twap": savings_vs_twap, "vwap": savings_vs_vwap}
+    print(json.dumps(results,indent=2))
+    print("Saving results to outputs.json")
+    with open("output.json", "w" , encoding ='utf8') as f:
+        json.dump(results, f)
+
+    
