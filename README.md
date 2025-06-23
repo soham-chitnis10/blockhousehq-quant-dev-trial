@@ -16,17 +16,23 @@ sudo dpkg -i containerd.io_1.7.27-1_amd64.deb docker-buildx-plugin_0.24.0-1~ubun
 
 ## Starting Docker Engine
 
-`sudo service docker start`
+```bash
+sudo service docker start
+```
 
 ## Build and start the container
 
-`sudo docker compose up -d`
+```
+sudo docker compose up -d
+```
 
 Note: You must be the folder containing `docker-compose.yml` file.
 
 ## To run the docker in interactive mode with bash
 
-```sudo docker exec -it kafka bash```
+```bash
+sudo docker exec -it kafka bash
+```
 
 Execute the above command in both terminals of EC2.
 
